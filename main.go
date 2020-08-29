@@ -3,7 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strconv"
 
 	"github.com/manifoldco/promptui"
@@ -58,8 +61,8 @@ func simpleConfirmPrompt() bool {
 	return result == "Y" || result == "y"
 }
 
-func system(name string, arg ...string) {
-	cmd := exec.Command(name, arg...)
+func system(name string, args ...string) {
+	cmd := exec.Command(name, args...)
 	bytes, err := cmd.Output()
 	if err != nil {
 		fmt.Println(err)
@@ -67,12 +70,60 @@ func system(name string, arg ...string) {
 	fmt.Println(string(bytes))
 }
 
-func fixPermission() {
-	fmt.Println(simpleIntPrompt("操作届数", "22"))
-	fmt.Println(simpleIntPrompt("起始编号", "1"))
-	fmt.Println(simpleIntPrompt("结束编号", "16"))
-	if simpleConfirmPrompt() {
+func getuid(user *user.User) int {
+	number, err := strconv.Atoi(user.Uid)
+	if err != nil {
+		panic(err)
+	}
+	return number
+}
 
+func getgid(user *user.User) int {
+	number, err := strconv.Atoi(user.Gid)
+	if err != nil {
+		panic(err)
+	}
+	return number
+}
+
+func chownR(path string, uid, gid int) error {
+	return filepath.Walk(path, func(name string, info os.FileInfo, err error) error {
+		if err == nil {
+			err = os.Chown(name, uid, gid)
+		}
+		return err
+	})
+}
+
+func fixPermission() {
+	grade := simpleIntPrompt("操作届数", "22")
+	start := simpleIntPrompt("起始编号", "1")
+	end := simpleIntPrompt("结束编号", "16")
+
+	if simpleConfirmPrompt() {
+		os.Chdir(fmt.Sprintf("/volume1/云上春晖/20%02d届", grade))
+		system("synoacltool", "-enforce-inherit", ".")
+		system("synoacltool", "-add", ".", "group:class:allow:r-x---a-R-c--:---n")
+
+		for i := start; i <= end; i++ {
+			username := fmt.Sprintf("%d%02d", grade, i)
+
+			user, err := user.Lookup(username)
+			if err != nil {
+				fmt.Println("找不到用户: ", username)
+				return
+			}
+
+			dir := fmt.Sprintf("%02d", i)
+
+			fmt.Println("正在设定所有者: ", username)
+			chownR(dir, getuid(user), getgid(user))
+			system("synoacltool", "-enforce-inherit", dir)
+			system("synoacltool", "-add", dir, fmt.Sprintf("user:%s:allow:rwxpdDaARWcCo:fd--", username))
+			fmt.Println("已完成: ", username)
+		}
+	} else {
+		fmt.Println("操作取消了")
 	}
 }
 
